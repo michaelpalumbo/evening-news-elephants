@@ -1,5 +1,13 @@
 # evening-news-elephants
 
+
+**IMPORTANT**: the 'speed' control is actually a delay time between characters being SENT to the printer. So a speeds of:
+
+- 1.0 = 1 character / second
+- .01 = 100 characters / second
+
+The printer may still print in small bursts because of its internal buffer and mechanical limits.
+
 ## to run
 
 ```shell
