@@ -90,23 +90,42 @@ def query_escp_status(printer, interface, out_endpoint, in_endpoint) -> None:
         print("\nNo IN endpoint available; cannot request detailed status.")
         return
 
+    # DLE EOT n commands, per Epson's real-time command set:
+    #   n=1: printer status
+    #   n=2: ink/ribbon status (not applicable to impact printers)
+    #   n=3: paper sensor status
+    requests = {
+        "Printer status (n=1)": b"\x10\x04\x01",
+        "Paper sensor status (n=3)": b"\x10\x04\x03",
+    }
+
     try:
         usb.util.claim_interface(printer, interface.bInterfaceNumber)
 
-        # DLE EOT 1 asks for the printer status byte.
-        # This is a real-time command; some Epson printers answer it,
-        # many do not respond over plain USB printer class.
-        out_endpoint.write(b"\x10\x04\x01")
+        for label, command in requests.items():
+            out_endpoint.write(command)
 
-        try:
-            data = in_endpoint.read(in_endpoint.wMaxPacketSize, timeout=1000)
-            status_byte = data[0]
-            print("\nESC/P status byte received:", bin(status_byte))
-            decode_status_byte(status_byte)
-        except usb.core.USBTimeoutError:
-            print("\nPrinter did not respond to the ESC/P status request.")
-            print("(This is common over USB printer-class devices; not all")
-            print(" Epson models expose real-time status this way.)")
+            try:
+                data = in_endpoint.read(
+                    in_endpoint.wMaxPacketSize, timeout=1000
+                )
+
+                if len(data) == 0:
+                    print(f"\n{label}: printer responded with no data.")
+                    continue
+
+                raw_bytes = list(data)
+                print(f"\n{label}: raw bytes = {raw_bytes}")
+                print(
+                    f"  binary = "
+                    f"{[bin(b) for b in raw_bytes]}"
+                )
+
+                if label.startswith("Printer status"):
+                    decode_status_byte(raw_bytes[0])
+
+            except usb.core.USBTimeoutError:
+                print(f"\n{label}: no response (timed out).")
 
     finally:
         usb.util.release_interface(printer, interface.bInterfaceNumber)

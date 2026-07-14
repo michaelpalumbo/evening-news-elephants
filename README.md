@@ -1,5 +1,9 @@
 # evening-news-elephants
 
+# installing
+
+```shell
+pip3 install pyusb
 
 **IMPORTANT**: the 'speed' control is actually a delay time between characters being SENT to the printer. So a speeds of:
 
