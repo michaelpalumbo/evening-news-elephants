@@ -49,21 +49,30 @@ else:
 # ---------------------------------------------------------------------------
 # ESC/P raster graphics parameters.
 #
-# ESC * m nL nH data... selects "bit image" mode. Mode 33 is
-# "high-resolution double-density" on FX-series printers: 240 dots
-# per inch horizontally, 180 dots per inch vertically is NOT how
-# ESC * works — ESC * addresses horizontal density only; vertical
-# resolution is fixed by how many 8-dot-tall strips you send (each
-# strip is 1/60th, 1/120th, etc. of an inch tall depending on mode).
+# ESC * m nL nH data... selects "bit image" mode. Mode 33 is a
+# 240-dpi-horizontal density mode on 9-pin Epson printers (confirmed
+# against Epson's classic ESC/P bit-image mode table). PRINT_DPI
+# controls horizontal rendering resolution and must match that.
 #
-# Mode 33 (double-density, unidirectional, 240 dpi horizontal) at
-# 180 dpi vertical strip height keeps things square-ish for a
-# reasonably crisp, reasonably fast print. Adjust PRINT_DPI to
-# change output resolution/print speed together.
+# Vertical scale is NOT derived from an assumed printer DPI for
+# bit-image mode (sources disagree on that number, and getting it
+# wrong is exactly what caused the "zoomed in" image). Instead,
+# LINE_SPACING_UNITS is the actual ESC 3 n value we send to the
+# printer (n/180 inch per printed strip), and the image's vertical
+# render DPI is derived FROM that value in print_pdf_page(), so the
+# two are guaranteed to agree with each other regardless of what the
+# printer's true native bit-image pitch actually is.
+#
+# If printed pages still look vertically stretched or squashed,
+# adjust LINE_SPACING_UNITS (smaller = printer feeds less paper per
+# strip = image appears taller/more stretched; larger = shorter/more
+# compressed) and re-test — this is the single knob to calibrate.
 # ---------------------------------------------------------------------------
-ESCP_GRAPHICS_MODE = 33  # 240 dpi horizontal, 8 vertical dots per strip
-PRINT_DPI = 240  # rendering resolution for both axes; must match the
+ESCP_GRAPHICS_MODE = 33  # 240 dpi horizontal
+PRINT_DPI = 240  # horizontal rendering resolution; must match the
                   # printer's horizontal dpi for the chosen graphics mode
+LINE_SPACING_UNITS = 8  # ESC 3 n value (n/180 inch) per 8-dot strip;
+                         # calibration starting point, adjust if needed
 
 
 # ---------------------------------------------------------------------------
@@ -127,16 +136,21 @@ def find_output_endpoint(printer):
     raise RuntimeError("Could not find the printer output endpoint.")
 
 
-def render_page_to_1bit(pdf_path: Path, page_number: int, dpi: int):
+def render_page_to_1bit(pdf_path: Path, page_number: int, horizontal_dpi: int, vertical_dpi: int):
     """
     Render one page (0-indexed) of the PDF to a 1-bit (black/white)
-    Pillow image at the given DPI.
+    Pillow image, using separate horizontal/vertical DPI so the
+    image's vertical scale matches whatever line-spacing command we
+    actually send to the printer (rather than assuming a fixed
+    vertical dot pitch the printer may or may not use for bit-image
+    mode).
     """
     doc = fitz.open(pdf_path)
     try:
         page = doc.load_page(page_number)
-        zoom = dpi / 72  # PDF points are 1/72 inch; fitz matrix is in that unit
-        matrix = fitz.Matrix(zoom, zoom)
+        zoom_x = horizontal_dpi / 72
+        zoom_y = vertical_dpi / 72
+        matrix = fitz.Matrix(zoom_x, zoom_y)
         pixmap = page.get_pixmap(matrix=matrix, colorspace=fitz.csGRAY)
 
         # PyMuPDF pixmap -> Pillow image
@@ -159,29 +173,30 @@ def get_page_count(pdf_path: Path) -> int:
         doc.close()
 
 
-def image_to_escp_raster(image, graphics_mode: int) -> bytes:
+def image_to_escp_raster(image, graphics_mode: int, line_spacing_units: int) -> bytes:
     """
     Convert a 1-bit Pillow image into a sequence of ESC/P
     "bit image" (ESC * m nL nH data) commands, one command per
     8-pixel-tall horizontal strip, printing top to bottom.
 
-    Between strips, a line feed (without extra vertical movement
-    beyond what the graphics mode already accounts for) advances to
-    the next strip. Because ESC/P bit-image mode already advances
-    the print head by exactly 8 dots' worth of paper per strip when
-    followed by a plain line feed at the configured line spacing,
-    we explicitly set line spacing to match 8 dots before printing
-    strips, then restore it after.
+    line_spacing_units is the value sent via ESC 3 n (n/180 inch
+    per line). The image must be rendered so that 8 pixels of image
+    height correspond to exactly this many 1/180" units of paper
+    feed — see get_vertical_dpi_for_line_spacing() — otherwise the
+    printed image will be vertically stretched or squashed relative
+    to its horizontal scale.
     """
+
     width, height = image.size
     pixels = image.load()
 
     output = bytearray()
 
-    # Set line spacing to 8/180 inch per strip, i.e. exactly the
-    # height of one 8-dot strip at 180 units/inch, so consecutive
-    # strips tile with no gaps or overlaps.
-    output += bytes([0x1B, 0x33, 8])  # ESC 3 n -> n/180 inch line spacing
+    # Set line spacing so consecutive 8-dot strips tile with no
+    # gaps or overlaps. The image was rendered (see
+    # get_vertical_dpi_for_line_spacing) so that 8 pixels of image
+    # height corresponds to exactly line_spacing_units / 180 inch.
+    output += bytes([0x1B, 0x33, line_spacing_units])  # ESC 3 n -> n/180 inch
 
     n_l = width % 256
     n_h = width // 256
@@ -206,9 +221,23 @@ def image_to_escp_raster(image, graphics_mode: int) -> bytes:
     return bytes(output)
 
 
+def get_vertical_dpi_for_line_spacing(line_spacing_units: int) -> float:
+    """
+    Given an ESC 3 n line-spacing value (n/180 inch per strip),
+    return the vertical DPI to render the image at so that 8 image
+    pixels of height correspond to exactly that much paper feed.
+    This keeps the image's vertical scale locked to whatever line
+    spacing we actually command the printer to use, instead of
+    trusting an assumed fixed pin pitch for bit-image mode.
+    """
+    strip_height_inches = line_spacing_units / 180
+    return 8 / strip_height_inches
+
+
 def print_pdf_page(output, settings: dict, pdf_path: Path, page_number: int) -> None:
-    image = render_page_to_1bit(pdf_path, page_number, PRINT_DPI)
-    raster_data = image_to_escp_raster(image, ESCP_GRAPHICS_MODE)
+    vertical_dpi = get_vertical_dpi_for_line_spacing(LINE_SPACING_UNITS)
+    image = render_page_to_1bit(pdf_path, page_number, PRINT_DPI, vertical_dpi)
+    raster_data = image_to_escp_raster(image, ESCP_GRAPHICS_MODE, LINE_SPACING_UNITS)
 
     output.write(b"\x1b@")  # reset to defaults
     output.write(raster_data)
