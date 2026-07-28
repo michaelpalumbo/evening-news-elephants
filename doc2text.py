@@ -26,6 +26,22 @@ BASE_NAME = "news"
 DELIMITER = "#####"
 LINE_COUNTS_FILENAME = "line_counts.json"
 
+# Typographic ("smart") characters that PDFs commonly use, mapped to
+# their plain-ASCII equivalents. The FX-2190II's built-in character
+# set doesn't include curly quotes/dashes, so anything left
+# unconverted gets silently turned into "?" at encode time.
+CHARACTER_REPLACEMENTS = {
+    "\u2018": "'",   # left single quote
+    "\u2019": "'",   # right single quote / apostrophe
+    "\u201a": "'",   # single low-9 quote
+    "\u201c": '"',   # left double quote
+    "\u201d": '"',   # right double quote
+    "\u201e": '"',   # double low-9 quote
+    "\u2013": "-",   # en dash
+    "\u2014": "-",   # em dash
+    "\u2026": "...", # ellipsis
+}
+
 
 def load_printable_chars_per_line() -> int:
     """
@@ -78,6 +94,18 @@ def collapse_to_single_line(story: str) -> str:
     return " ".join(story.split())
 
 
+def normalize_for_printer(text: str) -> str:
+    """
+    Replace typographic characters (curly quotes, em/en dashes,
+    ellipses, etc.) with plain-ASCII equivalents the printer can
+    actually render, instead of them falling back to "?" at encode
+    time.
+    """
+    for smart_char, plain_char in CHARACTER_REPLACEMENTS.items():
+        text = text.replace(smart_char, plain_char)
+    return text
+
+
 def main():
     if not os.path.isfile(PDF_PATH):
         print(f"Error: '{PDF_PATH}' is not a valid file.")
@@ -94,6 +122,7 @@ def main():
 
     for i, story in enumerate(stories, start=1):
         single_line_story = collapse_to_single_line(story)
+        single_line_story = normalize_for_printer(single_line_story)
 
         filename = f"{BASE_NAME}_{i}.txt"
         out_path = os.path.join(OUTPUT_FOLDER, filename)

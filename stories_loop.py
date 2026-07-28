@@ -10,6 +10,10 @@ news_2.txt, news_3.txt, and so on, using news_files/line_counts.json
 takes up. The program stops automatically once it reaches a file
 number that doesn't exist.
 
+Since ESC/P printers wrap purely on character count (no concept of
+word boundaries), stories are word-wrapped in Python before being
+sent, rather than relying on the printer's own line wrapping.
+
 Works on:
   - Windows: sends raw bytes through the existing Windows print
     driver via pywin32 (no libusb/Zadig needed)
@@ -18,6 +22,7 @@ Works on:
 
 import json
 import sys
+import textwrap
 import time
 from pathlib import Path
 
@@ -92,6 +97,20 @@ def find_output_endpoint(printer):
                 return interface, endpoint
 
     raise RuntimeError("Could not find the printer output endpoint.")
+
+
+def get_printable_chars_per_line(settings: dict) -> int:
+    """
+    Same calculation used in pdf_to_stories.py's line-count
+    estimate, kept here so actual print-time wrapping matches it.
+    """
+    page_width_inches = 8.5  # matches set_page_format's assumption
+    printable_width_inches = (
+        page_width_inches
+        - settings["left_margin_inches"]
+        - settings["right_margin_inches"]
+    )
+    return max(1, int(printable_width_inches * settings["characters_per_inch"]))
 
 
 def set_page_format(output, settings: dict) -> tuple[float, int]:
@@ -216,11 +235,29 @@ def gather_stories_for_page(
     return stories, file_number
 
 
+def wrap_story(story: str, chars_per_line: int) -> str:
+    """
+    Word-wrap a single-line story to chars_per_line, breaking only at
+    spaces (never mid-word), then rejoin with CRLF so the printer
+    treats each wrapped line as its own printed line.
+    """
+    wrapped_lines = textwrap.wrap(
+        story,
+        width=chars_per_line,
+        break_long_words=False,
+        break_on_hyphens=False,
+    )
+    return "\r\n".join(wrapped_lines)
+
+
 def print_page(output, settings: dict, stories: list[str]) -> None:
     line_height_inches, _ = set_page_format(output, settings)
     print_top_margin(output, settings, line_height_inches)
 
-    page_text = "\r\n\r\n".join(stories)
+    chars_per_line = get_printable_chars_per_line(settings)
+    wrapped_stories = [wrap_story(story, chars_per_line) for story in stories]
+
+    page_text = "\r\n\r\n".join(wrapped_stories)
     output.write(page_text.encode("ascii", errors="replace"))
     output.write(b"\r\n")
 
