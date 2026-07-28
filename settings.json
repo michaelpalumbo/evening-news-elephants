@@ -1,11 +1,12 @@
 {
-    "print_delay_seconds": 180,
+    "print_delay_seconds": 20,
     "left_margin_inches": 0.75,
     "right_margin_inches": 0.75,
     "top_margin_inches": 1.5,
     "bottom_margin_inches": 1.5,
     "line_spacing": 1.25,
     "characters_per_inch": 10,
-    "stories_file": "news.txt",
-    "story_delimiter": "#####"
+    "news_folder": "news_files",
+    "news_file_prefix": "news_",
+    "news_file_extension": ".txt"
 }
