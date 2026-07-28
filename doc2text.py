@@ -8,6 +8,7 @@ Usage:
 If output_folder is omitted, files are written to the current directory.
 """
 
+import glob
 import os
 import sys
 import pdfplumber
@@ -17,12 +18,20 @@ OUTPUT_FOLDER = "./news_files"
 BASE_NAME = "news"  # change this if you want a different filename prefix
 
 
+def clear_old_txt_files():
+    for txt_path in glob.glob(os.path.join(OUTPUT_FOLDER, "*.txt")):
+        os.remove(txt_path)
+        print(f"Removed {txt_path}")
+
+
 def main():
     if not os.path.isfile(PDF_PATH):
         print(f"Error: '{PDF_PATH}' is not a valid file.")
         sys.exit(1)
 
     os.makedirs(OUTPUT_FOLDER, exist_ok=True)
+
+    clear_old_txt_files()
 
     with pdfplumber.open(PDF_PATH) as pdf:
         for i, page in enumerate(pdf.pages, start=1):
