@@ -14,15 +14,36 @@ Usage:
 
 import glob
 import json
+import math
 import os
 import sys
 import pdfplumber
 
 PDF_PATH = "./news_files/news.pdf"
 OUTPUT_FOLDER = "./news_files"
+SETTINGS_PATH = "./settings.json"
 BASE_NAME = "news"
 DELIMITER = "#####"
 LINE_COUNTS_FILENAME = "line_counts.json"
+
+
+def load_printable_chars_per_line() -> int:
+    """
+    Read characters_per_inch and left/right margins from settings.json
+    to figure out how many characters fit on one printed line. Used to
+    estimate wrapped line count for stories that are now written as a
+    single unbroken line (letting the printer wrap them itself).
+    """
+    with open(SETTINGS_PATH, encoding="utf-8") as f:
+        settings = json.load(f)
+
+    page_width_inches = 8.5  # matches stories_loop.py's assumption
+    printable_width_inches = (
+        page_width_inches
+        - settings["left_margin_inches"]
+        - settings["right_margin_inches"]
+    )
+    return max(1, int(printable_width_inches * settings["characters_per_inch"]))
 
 
 def clear_old_txt_files():
@@ -47,6 +68,16 @@ def split_into_stories(full_text: str) -> list[str]:
     return [story for story in stories if story]
 
 
+def collapse_to_single_line(story: str) -> str:
+    """
+    Join all whitespace (including the newlines pdfplumber inserted
+    per line of the original layout) into single spaces, so the
+    printer does its own word-wrapping instead of us forcing breaks
+    at the PDF's original line boundaries.
+    """
+    return " ".join(story.split())
+
+
 def main():
     if not os.path.isfile(PDF_PATH):
         print(f"Error: '{PDF_PATH}' is not a valid file.")
@@ -57,20 +88,25 @@ def main():
 
     full_text = extract_full_text(PDF_PATH)
     stories = split_into_stories(full_text)
+    chars_per_line = load_printable_chars_per_line()
 
     line_counts = {}
 
     for i, story in enumerate(stories, start=1):
+        single_line_story = collapse_to_single_line(story)
+
         filename = f"{BASE_NAME}_{i}.txt"
         out_path = os.path.join(OUTPUT_FOLDER, filename)
 
         with open(out_path, "w", encoding="utf-8") as f:
-            f.write(story)
+            f.write(single_line_story)
 
-        line_count = len(story.splitlines())
+        # Estimate wrapped line count now that we're not forcing our
+        # own line breaks — the printer will wrap at chars_per_line.
+        line_count = max(1, math.ceil(len(single_line_story) / chars_per_line))
         line_counts[filename] = line_count
 
-        print(f"Wrote {out_path} ({line_count} lines)")
+        print(f"Wrote {out_path} (~{line_count} printed lines)")
 
     line_counts_path = os.path.join(OUTPUT_FOLDER, LINE_COUNTS_FILENAME)
     with open(line_counts_path, "w", encoding="utf-8") as f:
@@ -82,52 +118,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-# #!/usr/bin/env python3
-# """
-# Export each page of a PDF to its own .txt file (news_1.txt, news_2.txt, ...).
-
-# Usage:
-#     python pdf_to_txt_pages.py input.pdf [output_folder]
-
-# If output_folder is omitted, files are written to the current directory.
-# """
-
-# import glob
-# import os
-# import sys
-# import pdfplumber
-
-# PDF_PATH = "./news_files/news.pdf"
-# OUTPUT_FOLDER = "./news_files"
-# BASE_NAME = "news"  # change this if you want a different filename prefix
-
-
-# def clear_old_txt_files():
-#     for txt_path in glob.glob(os.path.join(OUTPUT_FOLDER, "*.txt")):
-#         os.remove(txt_path)
-#         print(f"Removed {txt_path}")
-
-
-# def main():
-#     if not os.path.isfile(PDF_PATH):
-#         print(f"Error: '{PDF_PATH}' is not a valid file.")
-#         sys.exit(1)
-
-#     os.makedirs(OUTPUT_FOLDER, exist_ok=True)
-
-#     clear_old_txt_files()
-
-#     with pdfplumber.open(PDF_PATH) as pdf:
-#         for i, page in enumerate(pdf.pages, start=1):
-#             text = page.extract_text() or ""
-#             out_path = os.path.join(OUTPUT_FOLDER, f"{BASE_NAME}_{i}.txt")
-#             with open(out_path, "w", encoding="utf-8") as f:
-#                 f.write(text)
-#             print(f"Wrote {out_path}")
-
-#     print(f"Done. {len(pdf.pages)} pages exported.")
-
-
-# if __name__ == "__main__":
-#     main()
