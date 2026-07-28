@@ -1,3 +1,6 @@
+# ignore this. read '__howTo.md'
+
+
 # evening-news-elephants
 
 # installing
