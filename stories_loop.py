@@ -422,9 +422,12 @@ def main() -> None:
             )
 
             if not stories:
-                print(f"No more files found (looked for file number {file_number}).")
-                print("Stopping.")
-                break
+                print(
+                    f"No more files found (looked for file number {file_number}). "
+                    f"Looping back to the first story."
+                )
+                file_number = 1
+                continue
 
             print_page(output, settings, stories, story_lines_used)
 
