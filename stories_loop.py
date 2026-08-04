@@ -48,6 +48,15 @@ else:
 # ---------------------------------------------------------------------------
 # Output abstraction: both platforms expose a simple `.write(bytes)` object
 # so all the printing logic below stays identical either way.
+#
+# IMPORTANT: on Windows, one whole print job (StartDocPrinter ...
+# EndDocPrinter) must span an entire page's worth of ESC/P commands
+# and data, not one job per write() call. Fragmenting a single page
+# across multiple jobs can let the spooler/driver disturb the
+# printer's internal page-position tracking between writes, causing
+# the printed content to land at the wrong vertical position on the
+# page. Use start_job()/end_job() (or the job() context manager)
+# around every write() that belongs to the same physical page.
 # ---------------------------------------------------------------------------
 
 class WindowsPrinterOutput:
@@ -56,17 +65,29 @@ class WindowsPrinterOutput:
     def __init__(self, printer_name):
         self.printer_name = printer_name
         self.handle = win32print.OpenPrinter(printer_name)
+        self._job_open = False
+
+    def start_job(self):
+        win32print.StartDocPrinter(self.handle, 1, ("ESC/P Job", None, "RAW"))
+        win32print.StartPagePrinter(self.handle)
+        self._job_open = True
 
     def write(self, data: bytes):
-        win32print.StartDocPrinter(self.handle, 1, ("ESC/P Job", None, "RAW"))
-        try:
-            win32print.StartPagePrinter(self.handle)
-            win32print.WritePrinter(self.handle, data)
+        if not self._job_open:
+            raise RuntimeError(
+                "write() called outside of a job. Call start_job() before "
+                "writing, and end_job() once all of a page's writes are done."
+            )
+        win32print.WritePrinter(self.handle, data)
+
+    def end_job(self):
+        if self._job_open:
             win32print.EndPagePrinter(self.handle)
-        finally:
             win32print.EndDocPrinter(self.handle)
+            self._job_open = False
 
     def close(self):
+        self.end_job()
         win32print.ClosePrinter(self.handle)
 
 
@@ -113,12 +134,19 @@ def get_printable_chars_per_line(settings: dict) -> int:
     return max(1, int(printable_width_inches * settings["characters_per_inch"]))
 
 
-def set_page_format(output, settings: dict) -> tuple[float, int]:
+def set_page_format(output, settings: dict) -> float:
     """
-    Configure margins, page length, and line spacing based on
-    settings.json. Returns (line_height_inches, page_length_lines) so
-    the caller can calculate top margin blank lines and how many
-    lines of story content fit in the printable area.
+    Configure margins and line spacing based on settings.json.
+    Returns line_height_inches so the caller can calculate how many
+    blank lines make up the top margin, and how many line feeds are
+    needed to advance to the next physical page.
+
+    Deliberately does NOT set a page length (ESC C) or use form feed
+    (0x0C) -- those rely on the printer's own page-length tracking,
+    which is exactly what caused the paper to advance an unreliable
+    amount. Instead, the caller advances the paper by sending a
+    calculated number of plain line feeds: enough to cover whatever
+    wasn't already used by this page's content.
     """
     cpi = settings["characters_per_inch"]
 
@@ -139,22 +167,7 @@ def set_page_format(output, settings: dict) -> tuple[float, int]:
 
     line_height_inches = line_units / 180
 
-    page_length_inches = 11.0  # adjust here if your paper isn't 11" long
-    printable_length_inches = (
-        page_length_inches
-        - settings["top_margin_inches"]
-        - settings["bottom_margin_inches"]
-    )
-    page_length_lines = int(printable_length_inches / line_height_inches)
-
-    # ESC C n still wants the *full* page length (top margin included),
-    # since blank lines are used to simulate the top margin below.
-    full_page_length_lines = round(
-        (page_length_inches - settings["bottom_margin_inches"]) / line_height_inches
-    )
-    output.write(bytes([0x1B, 0x43, full_page_length_lines]))
-
-    return line_height_inches, page_length_lines
+    return line_height_inches
 
 
 def print_top_margin(output, settings: dict, line_height_inches: float) -> None:
@@ -187,7 +200,7 @@ def load_line_counts(settings: dict) -> dict:
 
 def gather_stories_for_page(
     settings: dict, line_counts: dict, start_file_number: int, page_length_lines: int
-) -> tuple[list[str], int]:
+) -> tuple[list[str], int, int]:
     """
     Starting at start_file_number, keep adding stories (in order) as
     long as they still exist, their combined line count fits within
@@ -195,7 +208,11 @@ def gather_stories_for_page(
     hasn't been reached. Two blank lines are counted between stories
     as a separator.
 
-    Returns (list_of_story_texts, next_file_number).
+    Returns (list_of_story_texts, next_file_number, story_lines_used).
+    story_lines_used is just the story+separator line total -- it
+    does NOT include the top margin, since that's added separately
+    by the caller (top margin is constant regardless of story
+    content, so it doesn't belong in the packing decision itself).
     """
     SEPARATOR_LINES = 2
     max_stories_per_page = settings.get("max_stories_per_page")
@@ -232,7 +249,7 @@ def gather_stories_for_page(
         lines_used = projected_lines
         file_number += 1
 
-    return stories, file_number
+    return stories, file_number, lines_used
 
 
 def wrap_story(story: str, chars_per_line: int) -> str:
@@ -250,18 +267,48 @@ def wrap_story(story: str, chars_per_line: int) -> str:
     return "\r\n".join(wrapped_lines)
 
 
-def print_page(output, settings: dict, stories: list[str]) -> None:
-    line_height_inches, _ = set_page_format(output, settings)
-    print_top_margin(output, settings, line_height_inches)
+def print_page(
+    output, settings: dict, stories: list[str], story_lines_used: int
+) -> None:
+    """
+    Sends every command and every byte of text for one physical page
+    as a single Windows print job, so the driver/spooler can't
+    disturb the printer's page-position tracking partway through.
 
-    chars_per_line = get_printable_chars_per_line(settings)
-    wrapped_stories = [wrap_story(story, chars_per_line) for story in stories]
+    Instead of a form feed (which jumps to a fixed, printer-tracked
+    page length), the paper is advanced by a calculated number of
+    plain line feeds: exactly enough to cover whatever vertical
+    space this page's top margin + content didn't already use.
+    """
+    if IS_WINDOWS:
+        output.start_job()
 
-    page_text = "\r\n\r\n".join(wrapped_stories)
-    output.write(page_text.encode("ascii", errors="replace"))
-    output.write(b"\r\n")
+    try:
+        output.write(b"\x1b@")  # reset to defaults
 
-    output.write(b"\x0c")  # form feed to eject the page
+        line_height_inches = set_page_format(output, settings)
+
+        top_margin_lines = round(settings["top_margin_inches"] / line_height_inches)
+        print_top_margin(output, settings, line_height_inches)
+
+        chars_per_line = get_printable_chars_per_line(settings)
+        wrapped_stories = [wrap_story(story, chars_per_line) for story in stories]
+
+        page_text = "\r\n\r\n".join(wrapped_stories)
+        output.write(page_text.encode("ascii", errors="replace"))
+        output.write(b"\r\n")
+
+        # Total lines actually used on this physical page so far:
+        # top margin blanks + story/separator content.
+        total_lines_used = top_margin_lines + story_lines_used
+
+        physical_lines_per_page = settings["page_length_lines"]
+        advance_amount = max(0, physical_lines_per_page - total_lines_used)
+
+        output.write(b"\r\n" * advance_amount)
+    finally:
+        if IS_WINDOWS:
+            output.end_job()
 
 
 def main() -> None:
@@ -283,22 +330,15 @@ def main() -> None:
             settings = load_settings()
             line_counts = load_line_counts(settings)
 
-            # page_length_lines depends on margins/line spacing, so
-            # compute it the same way set_page_format does, without
-            # actually sending bytes yet.
-            cpi = settings["characters_per_inch"]
-            default_line_units = 30
-            line_units = round(default_line_units * settings["line_spacing"])
-            line_height_inches = line_units / 180
-            page_length_inches = 11.0
-            printable_length_inches = (
-                page_length_inches
-                - settings["top_margin_inches"]
-                - settings["bottom_margin_inches"]
-            )
-            page_length_lines = int(printable_length_inches / line_height_inches)
+            # page_length_lines is read directly from settings, rather
+            # than derived from line_spacing math -- the line-spacing
+            # ESC/P command's real effect on the printer isn't
+            # confirmed, so deriving a line budget from it can be
+            # wrong. Set this directly based on what you observe
+            # fitting on an actual printed page.
+            page_length_lines = settings["page_length_lines"]
 
-            stories, next_file_number = gather_stories_for_page(
+            stories, next_file_number, story_lines_used = gather_stories_for_page(
                 settings, line_counts, file_number, page_length_lines
             )
 
@@ -307,8 +347,7 @@ def main() -> None:
                 print("Stopping.")
                 break
 
-            output.write(b"\x1b@")  # reset to defaults
-            print_page(output, settings, stories)
+            print_page(output, settings, stories, story_lines_used)
 
             printed_range = (
                 f"{file_number}-{next_file_number - 1}"

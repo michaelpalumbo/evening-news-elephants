@@ -1,6 +1,5 @@
 ## START HERE
-1. enter the virtual environment: ```shell python3 -m venv venv``` and press enter
-2. activate it ```shell source venv/bin/activate``` and press enter
+2. activate virtual env ```shell source venv/bin/activate``` and press enter
 3. (michael only) if first time running on machine, install libs ```shell pip install pdfplumber pyusb``` and press enter
 4. to exit the venv, type ```shell exit``` and press enter
 
