@@ -48,6 +48,15 @@ else:
 # ---------------------------------------------------------------------------
 # Output abstraction: both platforms expose a simple `.write(bytes)` object
 # so all the printing logic below stays identical either way.
+#
+# IMPORTANT: on Windows, one whole print job (StartDocPrinter ...
+# EndDocPrinter) must span an entire page's worth of ESC/P commands
+# and data, not one job per write() call. Fragmenting a single page
+# across multiple jobs can let the spooler/driver disturb the
+# printer's internal page-position tracking between writes, causing
+# the printed content to land at the wrong vertical position on the
+# page. Use start_job()/end_job() (or the job() context manager)
+# around every write() that belongs to the same physical page.
 # ---------------------------------------------------------------------------
 
 class WindowsPrinterOutput:
@@ -56,17 +65,29 @@ class WindowsPrinterOutput:
     def __init__(self, printer_name):
         self.printer_name = printer_name
         self.handle = win32print.OpenPrinter(printer_name)
+        self._job_open = False
+
+    def start_job(self):
+        win32print.StartDocPrinter(self.handle, 1, ("ESC/P Job", None, "RAW"))
+        win32print.StartPagePrinter(self.handle)
+        self._job_open = True
 
     def write(self, data: bytes):
-        win32print.StartDocPrinter(self.handle, 1, ("ESC/P Job", None, "RAW"))
-        try:
-            win32print.StartPagePrinter(self.handle)
-            win32print.WritePrinter(self.handle, data)
+        if not self._job_open:
+            raise RuntimeError(
+                "write() called outside of a job. Call start_job() before "
+                "writing, and end_job() once all of a page's writes are done."
+            )
+        win32print.WritePrinter(self.handle, data)
+
+    def end_job(self):
+        if self._job_open:
             win32print.EndPagePrinter(self.handle)
-        finally:
             win32print.EndDocPrinter(self.handle)
+            self._job_open = False
 
     def close(self):
+        self.end_job()
         win32print.ClosePrinter(self.handle)
 
 
@@ -251,17 +272,31 @@ def wrap_story(story: str, chars_per_line: int) -> str:
 
 
 def print_page(output, settings: dict, stories: list[str]) -> None:
-    line_height_inches, _ = set_page_format(output, settings)
-    print_top_margin(output, settings, line_height_inches)
+    """
+    Sends every command and every byte of text for one physical page
+    as a single Windows print job, so the driver/spooler can't
+    disturb the printer's page-position tracking partway through.
+    """
+    if IS_WINDOWS:
+        output.start_job()
 
-    chars_per_line = get_printable_chars_per_line(settings)
-    wrapped_stories = [wrap_story(story, chars_per_line) for story in stories]
+    try:
+        output.write(b"\x1b@")  # reset to defaults
 
-    page_text = "\r\n\r\n".join(wrapped_stories)
-    output.write(page_text.encode("ascii", errors="replace"))
-    output.write(b"\r\n")
+        line_height_inches, _ = set_page_format(output, settings)
+        print_top_margin(output, settings, line_height_inches)
 
-    output.write(b"\x0c")  # form feed to eject the page
+        chars_per_line = get_printable_chars_per_line(settings)
+        wrapped_stories = [wrap_story(story, chars_per_line) for story in stories]
+
+        page_text = "\r\n\r\n".join(wrapped_stories)
+        output.write(page_text.encode("ascii", errors="replace"))
+        output.write(b"\r\n")
+
+        output.write(b"\x0c")  # form feed to eject the page
+    finally:
+        if IS_WINDOWS:
+            output.end_job()
 
 
 def main() -> None:
@@ -307,7 +342,6 @@ def main() -> None:
                 print("Stopping.")
                 break
 
-            output.write(b"\x1b@")  # reset to defaults
             print_page(output, settings, stories)
 
             printed_range = (
