@@ -372,6 +372,10 @@ def wait_with_pause_support(total_seconds: float) -> bool:
         countdown itself -- whatever time is left still elapses
         normally (paused or not), and only once it reaches 0 does
         the caller act on the restart flag.
+      - 'q' quits immediately, the same as Ctrl+C. Raises
+        KeyboardInterrupt so the caller's existing Ctrl+C handling
+        (cleanup, "Stopped." message) runs exactly the same way,
+        rather than having a separate quit path to keep in sync.
     Any other key is ignored.
 
     Returns True if 'r' was pressed at any point during this wait,
@@ -385,7 +389,9 @@ def wait_with_pause_support(total_seconds: float) -> bool:
     while remaining > 0:
         key = get_key_nonblocking()
 
-        if key == "p" and not paused:
+        if key == "q":
+            raise KeyboardInterrupt
+        elif key == "p" and not paused:
             paused = True
             print(f"Paused. {remaining:.1f} seconds remaining.")
         elif key == "c" and paused:
@@ -394,8 +400,8 @@ def wait_with_pause_support(total_seconds: float) -> bool:
         elif key == "r" and not restart_requested:
             restart_requested = True
             print(
-                f"Restart requested -- will start from story 1 once the "
-                f"current {remaining:.1f} second delay finishes."
+                f"\n\nRestart requested. Will begingit from story 1 once the "
+                f"print interval complets.\nCurrently {remaining:.1f} seconds remain."
             )
 
         if not paused:
@@ -452,10 +458,11 @@ def main() -> None:
                 if next_file_number - 1 > file_number
                 else str(file_number)
             )
-            print(f"Printed stories {printed_range}")
             print(
-                f"Waiting {settings['print_delay_seconds']} seconds... "
-                f"(press 'p' to pause, 'c' to continue, 'r' to restart from story 1)\n"
+                f"\n\n-----------"
+                f"\n\nTo change settings:\n1. open settings.json\n2. Modify values\n3. Save the settings.json file\n4. Quit the stories_loop.py program (q)\n5. Start the program again\n\nCommands:\n\np = pause\nc = continue\nr = restart from story 1\nq = quit\n"
+                f"\n\nPrinting stories {printed_range} now"
+                f"\n\nWaiting {settings['print_delay_seconds']} seconds until next print request... "
             )
 
             file_number = next_file_number
@@ -465,7 +472,7 @@ def main() -> None:
                 file_number = 1
 
     except KeyboardInterrupt:
-        print("\nStopped.")
+        print("\nStopped. Quitting...\nProgram Exited. \n\nTo run again, type:\npython3 stories_loop.py\n...and hit 'Enter'")
 
     finally:
         if IS_WINDOWS:
