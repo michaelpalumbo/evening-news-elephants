@@ -32,6 +32,7 @@ IS_WINDOWS = sys.platform.startswith("win")
 
 # ---- Windows-specific setup ----------------------------------------------
 if IS_WINDOWS:
+    import msvcrt
     import win32print
 
     # Must match the exact name shown in Windows' Devices and Printers
@@ -39,10 +40,36 @@ if IS_WINDOWS:
 
 # ---- macOS/Linux-specific setup -------------------------------------------
 else:
+    import select
+    import termios
+    import tty
+
     import usb.core
     import usb.util
 
     EPSON_VENDOR_ID = 0x04B8
+
+
+def get_key_nonblocking() -> str | None:
+    """
+    Return a single lowercase keypress if one is waiting in the input
+    buffer, or None if nothing has been pressed. Never blocks.
+    """
+    if IS_WINDOWS:
+        if msvcrt.kbhit():
+            return msvcrt.getch().decode(errors="ignore").lower()
+        return None
+    else:
+        fd = sys.stdin.fileno()
+        old_settings = termios.tcgetattr(fd)
+        try:
+            tty.setcbreak(fd)
+            ready, _, _ = select.select([sys.stdin], [], [], 0)
+            if ready:
+                return sys.stdin.read(1).lower()
+            return None
+        finally:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
 
 
 # ---------------------------------------------------------------------------
@@ -177,8 +204,21 @@ def set_page_format(output, settings: dict) -> float:
     output.write(bytes([0x1B, 0x6C, left_margin_chars]))  # ESC l
     output.write(bytes([0x1B, 0x51, right_margin_chars]))  # ESC Q
 
+    # ESC w n: double-height printing on/off (character height only).
+    font_height = settings.get("font_height", 1)
+    output.write(bytes([0x1B, 0x77, 1 if font_height == 2 else 0]))
+
     default_line_units = 30  # 1/6 inch, in 1/180ths
     line_units = round(default_line_units * settings["line_spacing"])
+
+    # Double-height characters need roughly double the vertical room
+    # between lines, or the tops/bottoms of adjacent lines touch or
+    # overlap. Without this, the printer still advances the paper by
+    # the normal (single-height) line amount between each line, even
+    # though the glyphs themselves are twice as tall.
+    if font_height == 2:
+        line_units *= 2
+
     output.write(bytes([0x1B, 0x33, line_units]))
 
     line_height_inches = line_units / 180
@@ -186,10 +226,6 @@ def set_page_format(output, settings: dict) -> float:
     # ESC W n: double-width printing on/off (character width only).
     font_width = settings.get("font_width", 1)
     output.write(bytes([0x1B, 0x57, 1 if font_width == 2 else 0]))
-
-    # ESC w n: double-height printing on/off (character height only).
-    font_height = settings.get("font_height", 1)
-    output.write(bytes([0x1B, 0x77, 1 if font_height == 2 else 0]))
 
     return line_height_inches
 
@@ -335,6 +371,34 @@ def print_page(
             output.end_job()
 
 
+def wait_with_pause_support(total_seconds: float) -> None:
+    """
+    Waits total_seconds, checking every 0.1s for a keypress so the
+    wait can be paused/resumed without blocking:
+      - 'p' pauses the countdown (remaining time is frozen, not lost)
+      - 'c' continues/resumes counting down from wherever it was
+    Any other key is ignored.
+    """
+    CHECK_INTERVAL = 0.1
+    remaining = total_seconds
+    paused = False
+
+    while remaining > 0:
+        key = get_key_nonblocking()
+
+        if key == "p" and not paused:
+            paused = True
+            print(f"Paused. {remaining:.1f} seconds remaining.")
+        elif key == "c" and paused:
+            paused = False
+            print(f"Resumed. {remaining:.1f} seconds remaining.")
+
+        if not paused:
+            remaining -= CHECK_INTERVAL
+
+        time.sleep(CHECK_INTERVAL)
+
+
 def main() -> None:
     settings = load_settings()
 
@@ -379,11 +443,14 @@ def main() -> None:
                 else str(file_number)
             )
             print(f"Printed stories {printed_range}")
-            print(f"Waiting {settings['print_delay_seconds']} seconds...\n")
+            print(
+                f"Waiting {settings['print_delay_seconds']} seconds... "
+                f"(\nCommands:\np : pause\nc : continue)\n"
+            )
 
             file_number = next_file_number
 
-            time.sleep(settings["print_delay_seconds"])
+            wait_with_pause_support(settings["print_delay_seconds"])
 
     except KeyboardInterrupt:
         print("\nStopped.")
