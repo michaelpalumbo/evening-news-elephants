@@ -4,14 +4,14 @@
     "right_margin_inches": 0.75,
     "top_margin_inches": 1.5,
     "bottom_margin_inches": 1.5,
-    "line_spacing": 1.25,
+    "line_spacing": 2.25,
     "characters_per_inch": 10,
     "news_folder": "news_files",
     "news_file_prefix": "news_",
     "news_file_extension": ".txt",
     "max_stories_per_page": 10,
     "pdf_path": "./news_files/news.pdf",
-    "page_length_lines": 65,
+    "page_length_lines": 33,
     "font_width": 1,
     "font_height": 2
 }
