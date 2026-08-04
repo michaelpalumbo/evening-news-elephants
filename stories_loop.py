@@ -210,15 +210,6 @@ def set_page_format(output, settings: dict) -> float:
 
     default_line_units = 30  # 1/6 inch, in 1/180ths
     line_units = round(default_line_units * settings["line_spacing"])
-
-    # Double-height characters need roughly double the vertical room
-    # between lines, or the tops/bottoms of adjacent lines touch or
-    # overlap. Without this, the printer still advances the paper by
-    # the normal (single-height) line amount between each line, even
-    # though the glyphs themselves are twice as tall.
-    if font_height == 2:
-        line_units *= 2
-
     output.write(bytes([0x1B, 0x33, line_units]))
 
     line_height_inches = line_units / 180
@@ -445,7 +436,7 @@ def main() -> None:
             print(f"Printed stories {printed_range}")
             print(
                 f"Waiting {settings['print_delay_seconds']} seconds... "
-                f"(\nCommands:\np : pause\nc : continue)\n"
+                f"(press 'p' to pause, 'c' to continue)\n"
             )
 
             file_number = next_file_number
