@@ -362,17 +362,25 @@ def print_page(
             output.end_job()
 
 
-def wait_with_pause_support(total_seconds: float) -> None:
+def wait_with_pause_support(total_seconds: float) -> bool:
     """
     Waits total_seconds, checking every 0.1s for a keypress so the
     wait can be paused/resumed without blocking:
       - 'p' pauses the countdown (remaining time is frozen, not lost)
       - 'c' continues/resumes counting down from wherever it was
+      - 'r' flags a restart to the first story; does NOT change the
+        countdown itself -- whatever time is left still elapses
+        normally (paused or not), and only once it reaches 0 does
+        the caller act on the restart flag.
     Any other key is ignored.
+
+    Returns True if 'r' was pressed at any point during this wait,
+    False otherwise.
     """
     CHECK_INTERVAL = 0.1
     remaining = total_seconds
     paused = False
+    restart_requested = False
 
     while remaining > 0:
         key = get_key_nonblocking()
@@ -383,11 +391,19 @@ def wait_with_pause_support(total_seconds: float) -> None:
         elif key == "c" and paused:
             paused = False
             print(f"Resumed. {remaining:.1f} seconds remaining.")
+        elif key == "r" and not restart_requested:
+            restart_requested = True
+            print(
+                f"Restart requested -- will start from story 1 once the "
+                f"current {remaining:.1f} second delay finishes."
+            )
 
         if not paused:
             remaining -= CHECK_INTERVAL
 
         time.sleep(CHECK_INTERVAL)
+
+    return restart_requested
 
 
 def main() -> None:
@@ -439,12 +455,14 @@ def main() -> None:
             print(f"Printed stories {printed_range}")
             print(
                 f"Waiting {settings['print_delay_seconds']} seconds... "
-                f"(press 'p' to pause, 'c' to continue)\n"
+                f"(press 'p' to pause, 'c' to continue, 'r' to restart from story 1)\n"
             )
 
             file_number = next_file_number
 
-            wait_with_pause_support(settings["print_delay_seconds"])
+            restart_requested = wait_with_pause_support(settings["print_delay_seconds"])
+            if restart_requested:
+                file_number = 1
 
     except KeyboardInterrupt:
         print("\nStopped.")
