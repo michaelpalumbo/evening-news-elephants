@@ -1,5 +1,5 @@
 {
-    "print_delay_seconds": 35,
+    "print_delay_seconds": 25,
     "left_margin_inches": 0.75,
     "right_margin_inches": 0.75,
     "top_margin_inches": 1.5,
@@ -11,5 +11,6 @@
     "news_file_extension": ".txt",
     "max_stories_per_page": 10,
     "pdf_path": "./news_files/news.pdf",
-    "page_length_lines": 65
+    "page_length_lines": 65,
+    "large_print": false
 }
