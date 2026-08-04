@@ -125,9 +125,9 @@ def get_printable_chars_per_line(settings: dict) -> int:
     Same calculation used in pdf_to_stories.py's line-count
     estimate, kept here so actual print-time wrapping matches it.
 
-    When large_print is enabled, double-width mode halves how many
-    characters physically fit per line, since each character takes
-    up twice the horizontal space.
+    font_width == 2 (double-width) halves how many characters
+    physically fit per line, since each character takes up twice
+    the horizontal space. font_width == 1 is normal width.
     """
     page_width_inches = 8.5  # matches set_page_format's assumption
     printable_width_inches = (
@@ -137,7 +137,8 @@ def get_printable_chars_per_line(settings: dict) -> int:
     )
     chars_per_line = int(printable_width_inches * settings["characters_per_inch"])
 
-    if settings.get("large_print"):
+    font_width = settings.get("font_width", 1)
+    if font_width == 2:
         chars_per_line = chars_per_line // 2
 
     return max(1, chars_per_line)
@@ -158,11 +159,13 @@ def set_page_format(output, settings: dict) -> float:
     wasn't already used by this page's content.
     """
     cpi = settings["characters_per_inch"]
-    if settings.get("large_print"):
-        cpi = cpi / 2  # double-width characters are twice as wide, so
-                        # margin character-positions must be halved to
-                        # land at the same physical inch position
 
+    # ESC l / ESC Q margins are specified in character-position units
+    # of the printer's currently selected pitch (10 or 12 CPI, set
+    # via ESC P / ESC M) -- NOT affected by ESC W double-width mode,
+    # which only changes how wide each character is drawn, not what
+    # a "character position" means for margin commands. So margin
+    # math always uses the real characters_per_inch, unmodified.
     left_margin_chars = round(settings["left_margin_inches"] * cpi)
 
     page_width_inches = 8.5  # adjust here if your paper isn't 8.5" wide
@@ -180,15 +183,13 @@ def set_page_format(output, settings: dict) -> float:
 
     line_height_inches = line_units / 180
 
-    # ESC W 1 / ESC W 0: double-width printing on/off. This is a
-    # standing mode (stays on until turned off), unlike SO which is
-    # a one-line-only version of the same effect. Used as the "make
-    # text bigger" control, since the FX-2190II doesn't offer a
-    # clean way to select non-standard pitches below 10 CPI directly.
-    if settings.get("large_print"):
-        output.write(bytes([0x1B, 0x57, 1]))  # ESC W 1 -> double-width on
-    else:
-        output.write(bytes([0x1B, 0x57, 0]))  # ESC W 0 -> double-width off
+    # ESC W n: double-width printing on/off (character width only).
+    font_width = settings.get("font_width", 1)
+    output.write(bytes([0x1B, 0x57, 1 if font_width == 2 else 0]))
+
+    # ESC w n: double-height printing on/off (character height only).
+    font_height = settings.get("font_height", 1)
+    output.write(bytes([0x1B, 0x77, 1 if font_height == 2 else 0]))
 
     return line_height_inches
 

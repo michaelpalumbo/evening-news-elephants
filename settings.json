@@ -12,5 +12,6 @@
     "max_stories_per_page": 10,
     "pdf_path": "./news_files/news.pdf",
     "page_length_lines": 65,
-    "large_print": false
+    "font_width": 1,
+    "font_height": 2
 }
