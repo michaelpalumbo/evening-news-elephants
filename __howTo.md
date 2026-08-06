@@ -1,6 +1,6 @@
 ## START HERE
-2. activate virtual env ```shell source venv/bin/activate``` and press enter
-3. (michael only) if first time running on machine, install libs ```shell pip install pdfplumber pyusb``` and press enter
+1. enter the virtual environment: ```venv\Scripts\activate.ps1``` and press enter
+3. (michael only) if first time running on machine, install libs ```shell pip install pdfplumber pyusb pywin32``` and press enter
 4. to exit the venv, type ```shell exit``` and press enter
 
 ## Process the updated news file 
