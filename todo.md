@@ -10,7 +10,6 @@ app script:
 - UPDATES:
 - specify what font the printer is printing on (so that the google doc is accurate)
 - also specify the font size. 
-- be able to pause the stories_loop.py
 
 - ERRORS:
 
@@ -27,3 +26,8 @@ app script:
 10. for the practice pd patch, set it up on mike's mac laptop (a good one), and set it up with his USB mic too. remember to bring the korg nanoKontrol2 and mini usb cable
 
      
+
+     1. r = restart
+     2. q = quit
+     3. loop the print jobs indefinitely
+     4. ask mike about practice app
