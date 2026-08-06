@@ -1,9 +1,9 @@
 {
-    "print_delay_seconds": 135,
-    "left_margin_inches": 0.75,
+    "print_delay_seconds": 60,
+    "left_margin_inches": 0.25,
     "right_margin_inches": 0.75,
-    "top_margin_inches": 1.5,
-    "bottom_margin_inches": 1.5,
+    "top_margin_inches": 0.25,
+    "bottom_margin_inches": 0.25,
     "line_spacing": 2.25,
     "characters_per_inch": 10,
     "news_folder": "news_files",
