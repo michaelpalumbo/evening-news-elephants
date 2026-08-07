@@ -1,14 +1,7 @@
-## START HERE
+## ONLY IF THE LEFT TERMINAL DOESNT HAVE "(VENV)" in green text
 1. enter the virtual environment: ```venv\Scripts\activate.ps1``` and press enter
 3. (michael only) if first time running on machine, install libs ```shell pip install pdfplumber pyusb pywin32``` and press enter
 4. to exit the venv, type ```shell exit``` and press enter
-
-## Process the updated news file 
-1. download the latest google doc as a pdf
-2. rename it 'news.pdf'
-3. remove the current news.pdf in the folder /news_files
-4. move the new news.pdf file into /news_files
-5. in the python venv (see above), run ```shell python3 doc2text.py``` and press enter
 
 
 ## running the print app
