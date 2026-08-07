@@ -1,7 +1,7 @@
 {
-    "print_delay_seconds": 60,
-    "left_margin_inches": 0.25,
-    "right_margin_inches": 0.75,
+    "print_delay_seconds": 155,
+    "left_margin_inches": 0,
+    "right_margin_inches": 0.50,
     "top_margin_inches": 0.25,
     "bottom_margin_inches": 0.25,
     "line_spacing": 2.25,
