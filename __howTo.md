@@ -13,5 +13,5 @@
 
 ## running the print app
 1. (optional) check/update the settings in settings.json
-2. in the python venv (see above), run ```shell python3 stories_loop.py``` and press enter
+2. in the python venv (see above), run ```python3 print_docx_loop.py``` and press enter
 3. to quit the app, use the hotkey ctrl-C (the current print job will continue printing until the page is completes)
