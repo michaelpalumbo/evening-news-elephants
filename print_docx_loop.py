@@ -198,6 +198,8 @@ def print_docx(output: WindowsPrinterOutput, settings: dict, docx_path: Path) ->
     output.start_job()
     try:
         output.write(b"\x1b@")  # reset to defaults
+
+        output.write(bytes([0x1B, 0x78, 1 if settings.get("nlq", False) else 0]))
         line_height_inches = set_page_format(output, settings)
         print_top_margin(output, settings, line_height_inches)
 

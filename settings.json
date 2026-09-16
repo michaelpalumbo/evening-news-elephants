@@ -4,7 +4,7 @@
     "right_margin_inches": 0.75,
     "top_margin_inches": 0.25,
     "bottom_margin_inches": 0.25,
-    "line_spacing": 2.25,
+    "line_spacing": 1.75,
     "characters_per_inch": 10,
     "news_folder": "news_files",
     "news_file_prefix": "news_",
@@ -13,5 +13,6 @@
     "pdf_path": "./news_files/news.pdf",
     "page_length_lines": 24,
     "font_width": 1,
-    "font_height": 2
+    "font_height": 1,
+    "nlq": true
 }
