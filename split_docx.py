@@ -21,7 +21,9 @@ This script:
   6. Closes LibreOffice.
 
 Usage:
-    python split_docx_by_page.py <path_to_docx>
+
+run this first:  this oooenv env -t
+    then: python split_docx_by_page.py <path_to_docx>
 
 Windows only (paths/LibreOffice executable location assume Windows;
 adjust LIBREOFFICE_EXE for other platforms).
