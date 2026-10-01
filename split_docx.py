@@ -39,7 +39,7 @@ from com.sun.star.beans import PropertyValue
 
 LIBREOFFICE_EXE = r"C:\Program Files\LibreOffice\program\soffice.exe"
 UNO_PORT = 2002
-OUTPUT_FOLDER = Path("news_docs")
+OUTPUT_FOLDER = Path("news_files")
 OUTPUT_PREFIX = "news"
 
 
@@ -145,27 +145,54 @@ def move_paragraph_to_next_page(document, paragraph) -> None:
     )
 
 
-def repaginate_spanning_paragraphs(document, max_pages: int) -> None:
+def repaginate_spanning_paragraphs(document, max_pages=None) -> None:
     """
-    Walks pages 1 through max_pages IN ORDER, on the document's
-    current live state (not a pre-computed snapshot). For each page,
-    repeatedly finds and moves forward any paragraph spanning into
-    the next page, until that page has no more spanning paragraphs
-    -- then moves on to the next page number, whose content may now
-    include a paragraph that was just pushed into it.
+    Single forward pass over the paragraphs. Inserting a page break
+    only changes layout from that point on, so each paragraph's
+    page is read from the live layout as we reach it. Paragraphs
+    already at the top of a page but still spanning (longer than a
+    page) are left alone, since a break can't fix them.
     """
-    page_number = 1
-    while page_number <= max_pages:
-        spanning_paragraph = find_paragraph_spanning_page_boundary(document, page_number)
+    text = document.getText()
+    view_cursor = document.getCurrentController().getViewCursor()
+    paragraphs = list_paragraphs(text)
+    page_break = uno.Enum("com.sun.star.style.BreakType", "PAGE_BEFORE")
 
-        if spanning_paragraph is not None:
-            move_paragraph_to_next_page(document, spanning_paragraph)
-            # Re-check the SAME page number again, in case moving
-            # that paragraph reveals another spanning paragraph now
-            # sitting at this page's new boundary.
-            continue
+    previous_end_page = 0
+    moved = 0
+    too_long = 0
+    total = len(paragraphs)
 
-        page_number += 1
+    for index, paragraph in enumerate(paragraphs, start=1):
+        view_cursor.gotoRange(paragraph.getStart(), False)
+        start_page = view_cursor.getPage()
+
+        if max_pages is not None and start_page > max_pages:
+            break
+
+        view_cursor.gotoRange(paragraph.getEnd(), False)
+        end_page = view_cursor.getPage()
+
+        if end_page > start_page:
+            at_top_of_page = start_page > previous_end_page
+            if at_top_of_page:
+                too_long += 1
+            else:
+                paragraph.BreakType = page_break
+                moved += 1
+                view_cursor.gotoRange(paragraph.getEnd(), False)
+                end_page = view_cursor.getPage()
+
+        previous_end_page = end_page
+
+        if index % 50 == 0 or index == total:
+            print(f"  {index}/{total} paragraphs checked, "
+                  f"{moved} moved, now on page {end_page}")
+
+    print(f"Moved {moved} paragraph(s) to the next page.")
+    if too_long:
+        print(f"Warning: {too_long} paragraph(s) are longer than a page "
+              f"and still span a boundary.")
 
 
 def get_page_count(document) -> int:
@@ -183,6 +210,55 @@ def save_document_copy(document, output_path: Path) -> None:
     save_props = (make_property_value("FilterName", "MS Word 2007 XML"),)
     document.storeToURL(output_url, save_props)
 
+def split_into_pages(document, output_folder: Path) -> None:
+    """
+    For each rendered page: delete everything after it and before
+    it, save what's left as its own .docx, then undo the deletions
+    to get the full document back for the next page. Uses the live
+    layout, so page boundaries match what LibreOffice renders.
+    """
+    controller = document.getCurrentController()
+    view_cursor = controller.getViewCursor()
+    text = document.getText()
+    undo_manager = document.getUndoManager()
+    no_break = uno.Enum("com.sun.star.style.BreakType", "NONE")
+
+    page_count = controller.PageCount
+
+    for page in range(1, page_count + 1):
+        undo_manager.enterUndoContext(f"split page {page}")
+        try:
+            # Delete everything after this page.
+            view_cursor.jumpToPage(page)
+            view_cursor.jumpToEndOfPage()
+            tail = text.createTextCursorByRange(view_cursor.getStart())
+            tail.gotoEnd(True)
+            tail.setString("")
+
+            # Delete everything before this page.
+            view_cursor.jumpToPage(page)
+            view_cursor.jumpToStartOfPage()
+            head = text.createTextCursorByRange(view_cursor.getStart())
+            head.gotoStart(True)
+            head.setString("")
+
+            # The first paragraph may carry the page break we added,
+            # which would otherwise leave a blank first page.
+            text.createEnumeration().nextElement().BreakType = no_break
+        finally:
+            undo_manager.leaveUndoContext()
+
+        output_path = output_folder / f"{OUTPUT_PREFIX}{page}.docx"
+        save_document_copy(document, output_path)
+        undo_manager.undo()
+
+        if controller.PageCount != page_count:
+            raise RuntimeError(
+                f"Undo didn't restore the full document after page {page} "
+                f"({controller.PageCount} pages instead of {page_count})."
+            )
+
+        print(f"  Saved {output_path} ({page}/{page_count})")
 
 def list_paragraphs(text):
     enumeration = text.createEnumeration()
@@ -229,16 +305,16 @@ def main() -> None:
             page_count = get_page_count(document)
             print(f"Document has {page_count} real rendered page(s).")
 
-            pages_to_process = max_pages if max_pages is not None else page_count
-            print(f"Repaginating spanning paragraphs across pages 1-{pages_to_process}...")
-
-            repaginate_spanning_paragraphs(document, pages_to_process)
+            print("Repaginating spanning paragraphs...")
+            repaginate_spanning_paragraphs(document, max_pages)
 
             OUTPUT_FOLDER.mkdir(exist_ok=True)
             verification_path = OUTPUT_FOLDER / "spacedDoc.docx"
             save_document_copy(document, verification_path)
             print(f"Saved {verification_path} for verification.")
 
+            print(f"Splitting into {get_page_count(document)} page file(s)...")
+            split_into_pages(document, OUTPUT_FOLDER)
         finally:
             document.close(False)
 
